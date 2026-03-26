@@ -21,10 +21,10 @@ fn test_get_price_existing_asset() {
     let asset = symbol_short!("XLM");
     client.set_price(&asset, &1_000_000_i128);
 
-    let retrieved_price = client.try_get_price(&asset).unwrap().unwrap();
-    assert_eq!(retrieved_price.asset, asset);
+    let retrieved_price = result.unwrap().unwrap();
     assert_eq!(retrieved_price.price, 1_000_000_i128);
     assert_eq!(retrieved_price.timestamp, 1_234_567_890);
+    assert_eq!(retrieved_price.provider, contract_id);
 }
 
 #[test]
