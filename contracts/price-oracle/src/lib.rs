@@ -91,6 +91,14 @@ impl PriceOracle {
         crate::auth::_set_paused(&env, false);
     }
 
+    /// Get the currently configured admin address.
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&crate::auth::DataKey::Admin)
+            .expect("Admin not set: contract not initialised")
+    }
+
     /// Get the price data for a specific asset.
     pub fn get_price(env: Env, asset: Symbol) -> Result<PriceData, Error> {
         let storage = env.storage().persistent();
