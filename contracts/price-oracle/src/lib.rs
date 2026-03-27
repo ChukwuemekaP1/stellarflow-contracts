@@ -4,6 +4,8 @@ use soroban_sdk::{contract, contracterror, contractevent, contractimpl, Address,
 
 use crate::types::{DataKey, PriceData};
 
+const PRICE_DATA_KEY: Symbol = symbol_short!("prices");
+
 /// Error types for the price oracle contract
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -15,16 +17,18 @@ pub enum Error {
     Unauthorized = 2,
     /// Asset symbol is not in the approved list (NGN, KES, GHS)
     InvalidAssetSymbol = 3,
+    /// Price must be greater than zero.
+    InvalidPrice = 4,
 }
 
 /// Event emitted when a price is updated
-#[contractevent]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceUpdated {
-    pub source: Address,
     pub asset: Symbol,
-    pub price: i128,
-    pub timestamp: u64,
+    pub new_price: i128,
+    pub old_price: i128,
+    pub provider_address: Address,
 }
 
 /// Event emitted when the admin address is changed
@@ -59,6 +63,10 @@ pub fn calculate_percentage_change_bps(old_price: i128, new_price: i128) -> Opti
 /// compare the result directly against a threshold without worrying about direction.
 pub fn calculate_percentage_difference_bps(old_price: i128, new_price: i128) -> Option<i128> {
     calculate_percentage_change_bps(old_price, new_price).map(i128::abs)
+}
+
+fn is_valid(price: i128) -> bool {
+    price > 0
 }
 
 #[contractimpl]
@@ -107,6 +115,14 @@ impl PriceOracle {
         prices.get(asset)
     }
 
+    /// Get the most recent price for a specific asset.
+    ///
+    /// Returns the price value as an i128, or an error if the asset is not found.
+    pub fn get_last_price(env: Env, asset: Symbol) -> Result<i128, Error> {
+        let price_data = Self::get_price(env, asset)?;
+        Ok(price_data.price)
+    }
+
     /// Returns a vector of all currently tracked asset symbols.
     pub fn get_all_assets(env: Env) -> soroban_sdk::Vec<Symbol> {
         let prices: soroban_sdk::Map<Symbol, PriceData> = env
@@ -149,7 +165,7 @@ impl PriceOracle {
     /// * `Error::InvalidAssetSymbol` - If `asset` is not NGN, KES, or GHS
     ///
     /// # Panics
-    /// If `source` is not a whitelisted provider.
+    /// If `source` is not a whitelisted provider or if the contract is paused.
     pub fn update_price(
         env: Env,
         source: Address,
@@ -164,6 +180,10 @@ impl PriceOracle {
             return Err(Error::InvalidAssetSymbol);
         }
 
+        if !is_valid(price) {
+            return Err(Error::InvalidPrice);
+        }
+
         if !crate::auth::_is_provider(&env, &source) {
             panic!("Unauthorised: caller is not a whitelisted provider");
         }
@@ -172,6 +192,11 @@ impl PriceOracle {
         let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
             .get(&DataKey::PriceData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
+
+        let old_price = prices
+            .get(asset.clone())
+            .map(|existing_price| existing_price.price)
+            .unwrap_or(0);
 
         let timestamp = env.ledger().timestamp();
         let price_data = PriceData {
@@ -198,6 +223,7 @@ impl PriceOracle {
 
 mod asset_symbol;
 mod auth;
+pub mod math;
 mod median;
 mod test;
 mod types;

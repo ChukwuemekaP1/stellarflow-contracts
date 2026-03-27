@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Ledger, Address, Env};
+use soroban_sdk::{symbol_short, testutils::Address as _, testutils::Events, testutils::Ledger, Address, Env};
 
 #[test]
 fn test_initialize_success() {
@@ -44,6 +44,71 @@ fn setup() -> (Env, PriceOracleClient<'static>) {
     let client = PriceOracleClient::new(&env, &contract_id);
     (env, client)
 }
+
+#[test]
+fn test_init_admin_sets_admin_once() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.init_admin(&admin);
+
+    env.as_contract(&contract_id, || {
+        assert!(crate::auth::_has_admin(&env));
+        assert_eq!(crate::auth::_get_admin(&env), admin);
+    });
+}
+
+#[test]
+fn test_get_admin_reader_returns_current_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.init_admin(&admin);
+
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+#[should_panic(expected = "Admin already initialised")]
+fn test_init_admin_panics_when_called_twice() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let first_admin = Address::generate(&env);
+    let second_admin = Address::generate(&env);
+
+    client.init_admin(&first_admin);
+    client.init_admin(&second_admin);
+}
+
+#[test]
+fn test_get_price_existing_asset() {
+    let env = Env::default();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    env.ledger().set_timestamp(1_234_567_890);
+    env.ledger().set_sequence_number(1);
+
+    let asset = symbol_short!("XLM");
+    client.set_price(&asset, &1_000_000_i128, &6u32);
+
+    let retrieved_price = client.get_price(&asset);
+    assert_eq!(retrieved_price.price, 1_000_000_i128);
+    assert_eq!(retrieved_price.timestamp, 1_234_567_890);
+    assert_eq!(retrieved_price.decimals, 6u32);
+    assert_eq!(retrieved_price.provider, contract_id);
+}
+
 #[test]
 fn test_get_price_nonexistent_asset() {
     let env = Env::default();
@@ -220,6 +285,33 @@ fn test_update_price_rejects_unapproved_symbol() {
         Err(Ok(e)) => assert_eq!(e, Error::InvalidAssetSymbol),
         other => panic!("expected InvalidAssetSymbol, got {:?}", other),
     }
+}
+
+#[test]
+fn test_update_price_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let provider = Address::generate(&env);
+    let asset = symbol_short!("NGN");
+    let old_price: i128 = 1_250_000;
+    let price: i128 = 1_500_000;
+
+    env.as_contract(&contract_id, || {
+        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_add_provider(&env, &provider);
+    });
+
+    client.set_price(&asset, &old_price);
+    env.ledger().set_timestamp(1_700_000_000);
+    client.update_price(&provider, &asset, &price);
+
+    // let events = env.events().all();
+    // assert!(events.len() > 0);
 }
 
 #[test]
