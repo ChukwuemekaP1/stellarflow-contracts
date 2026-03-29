@@ -137,6 +137,10 @@ fn is_valid(price: i128) -> bool {
     price > 0
 }
 
+fn is_whitelisted_provider(env: &Env, source: &Address) -> bool {
+    crate::auth::_is_provider(env, source)
+}
+
 /// Check if a price entry is stale based on its TTL.
 ///
 /// A price is considered stale if the current ledger timestamp has passed
@@ -435,7 +439,7 @@ impl PriceOracle {
             return Err(Error::InvalidPrice);
         }
 
-        if !crate::auth::_is_provider(&env, &source) {
+        if !is_whitelisted_provider(&env, &source) {
             return Err(Error::NotAuthorized);
         }
 
