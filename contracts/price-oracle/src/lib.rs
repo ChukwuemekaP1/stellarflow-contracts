@@ -78,6 +78,16 @@ pub struct PriceUpdatedEvent {
     pub price: i128,
 }
 
+/// Event emitted when a new asset is added to the price oracle.
+/// 
+/// This event is useful for auditing and tracking which assets have been
+/// newly registered in the oracle. It is emitted only when an asset is
+/// added for the first time, not on subsequent price updates.
+#[soroban_sdk::contractevent]
+pub struct AssetAddedEvent {
+    pub symbol: Symbol,
+}
+
 /// Returns the signed percentage change in basis points.
 ///
 /// Example: 1_000_000 -> 1_200_000 returns 2_000 (20.00%).
@@ -264,6 +274,9 @@ impl PriceOracle {
             .get(&DataKey::PriceData)
             .unwrap_or_else(|| soroban_sdk::Map::new(&env));
 
+        // Check if this is a new asset being added (for event emission)
+        let is_new_asset = !prices.contains_key(asset.clone());
+
         // For demo/testing, set confidence_score to 100. In production, this should be provided as an argument.
         let price_data = PriceData {
             price: val,
@@ -274,8 +287,15 @@ impl PriceOracle {
             ttl,
         };
 
-        prices.set(asset, price_data);
+        prices.set(asset.clone(), price_data);
         storage.set(&DataKey::PriceData, &prices);
+
+        // Emit AssetAdded event only when a new asset is added (not on updates)
+        if is_new_asset {
+            env.events().publish_event(&AssetAddedEvent {
+                symbol: asset,
+            });
+        }
     }
 
     /// Upgrade the contract WASM code.
