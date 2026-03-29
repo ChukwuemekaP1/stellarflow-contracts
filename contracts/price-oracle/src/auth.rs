@@ -35,7 +35,7 @@ pub fn _is_authorized(env: &Env, caller: &Address) -> bool {
     env.storage()
         .instance()
         .get::<DataKey, Vec<Address>>(&DataKey::Admin)
-        .map(|admins| admins.iter().any(|admin| admin == caller))
+        .map(|admins| admins.iter().any(|admin| admin == *caller))
         .unwrap_or(false)
 }
 
@@ -49,7 +49,7 @@ pub fn _require_authorized(env: &Env, caller: &Address) {
 pub fn _add_authorized(env: &Env, new_admin: &Address) {
     let mut admins = _get_admin(env);
     // Avoid duplicates
-    if !admins.iter().any(|admin| admin == new_admin) {
+    if !admins.iter().any(|admin| admin == *new_admin) {
         admins.push_back(new_admin.clone());
         _set_admin(env, &admins);
     }
@@ -57,15 +57,17 @@ pub fn _add_authorized(env: &Env, new_admin: &Address) {
 
 /// Remove an address from the authorized admin list.
 pub fn _remove_authorized(env: &Env, admin_to_remove: &Address) {
-    let mut admins = _get_admin(env);
+    let admins = _get_admin(env);
     let original_len = admins.len();
-    
-    // Filter out the admin to remove
-    let filtered: Vec<Address> = admins
-        .iter()
-        .filter(|admin| admin != admin_to_remove)
-        .collect();
-    
+
+    // Build a new Vec without the removed admin (soroban Vec doesn't impl FromIterator)
+    let mut filtered = Vec::new(env);
+    for admin in admins.iter() {
+        if admin != *admin_to_remove {
+            filtered.push_back(admin);
+        }
+    }
+
     // Only update storage if something was actually removed
     if filtered.len() < original_len {
         _set_admin(env, &filtered);
@@ -378,7 +380,7 @@ mod auth_tests {
     fn test_admin_is_not_auto_whitelisted_as_provider() {
         let (env, contract_id, admin) = setup();
         env.as_contract(&contract_id, || {
-            assert!(_is_admin(&env, &admin));
+            assert!(_is_authorized(&env, &admin));
             assert!(!_is_provider(&env, &admin));
         });
     }

@@ -70,8 +70,8 @@ fn test_initialize_success() {
 
     // Must be inside as_contract to access instance storage
     env.as_contract(&contract_id, || {
-        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
-        assert_eq!(stored_admin, admin);
+        let stored_admins: soroban_sdk::Vec<Address> = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert!(stored_admins.contains(&admin));
 
         let stored_pairs: soroban_sdk::Vec<Symbol> = env
             .storage()
@@ -121,7 +121,7 @@ fn test_init_admin_sets_admin_once() {
 
     env.as_contract(&contract_id, || {
         assert!(crate::auth::_has_admin(&env));
-        assert_eq!(crate::auth::_get_admin(&env), admin);
+        assert!(crate::auth::_get_admin(&env).contains(&admin));
     });
 }
 
@@ -264,7 +264,7 @@ fn test_update_price_provider_can_store_new_price() {
     let asset = symbol_short!("NGN");
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
         crate::auth::_add_provider(&env, &provider);
     });
 
@@ -291,7 +291,7 @@ fn test_update_price_multiple_updates() {
     let asset = symbol_short!("NGN");
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
         crate::auth::_add_provider(&env, &provider);
     });
 
@@ -314,7 +314,7 @@ fn test_update_price_admin_authority() {
     let unauthorized_address = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
     });
 
     let result = client.try_update_price(
@@ -342,7 +342,7 @@ fn test_update_price_rejects_unapproved_symbol() {
     let provider = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
         crate::auth::_add_provider(&env, &provider);
     });
 
@@ -368,7 +368,7 @@ fn test_update_price_emits_event() {
     let price: i128 = 1_500_000;
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
         crate::auth::_add_provider(&env, &provider);
     });
 
@@ -451,7 +451,7 @@ fn test_remove_asset_deletes_price_entry() {
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
     });
 
     let asset = symbol_short!("NGN");
@@ -477,7 +477,7 @@ fn test_remove_asset_not_in_get_all_assets() {
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
     });
 
     let ngn = symbol_short!("NGN");
@@ -503,7 +503,7 @@ fn test_remove_asset_nonexistent_returns_error() {
     let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
     });
 
     let result = client.try_remove_asset(&admin, &symbol_short!("NGN"));
@@ -524,7 +524,7 @@ fn test_remove_asset_non_admin_is_rejected() {
     let non_admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
 
     env.as_contract(&contract_id, || {
-        crate::auth::_set_admin(&env, &admin);
+        crate::auth::_set_admin(&env, &soroban_sdk::vec![&env, admin.clone()]);
     });
 
     let asset = symbol_short!("NGN");
@@ -659,6 +659,47 @@ fn test_dummy_consumer_multiple_price_fetches() {
     let kes_price_2 = dummy_client.get_oracle_price(&oracle_id, &kes);
     assert_eq!(ngn_price_2, 1_200_000_i128);
     assert_eq!(kes_price_2, 450_000_i128);
+}
+
+// ============================================================================
+// Upgrade tests
+// ============================================================================
+
+/// A real Soroban WASM blob used to satisfy the host's WASM validation
+/// when testing `upload_contract_wasm` in the upgrade happy-path test.
+const TEST_WASM: &[u8] = include_bytes!("../test_fixtures/test_contract_data.wasm");
+
+#[test]
+fn test_upgrade_admin_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    client.init_admin(&admin);
+
+    let new_wasm_hash = env.deployer().upload_contract_wasm(TEST_WASM);
+    // Should not panic – admin is authorised
+    client.upgrade(&admin, &new_wasm_hash);
+}
+
+#[test]
+#[should_panic(expected = "Unauthorised: caller is not in the authorized admin list")]
+fn test_upgrade_rejects_non_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+    let admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    let non_admin = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
+    client.init_admin(&admin);
+
+    // Auth check runs before the hash is used, so any 32-byte value is fine here.
+    let dummy_hash = soroban_sdk::BytesN::from_array(&env, &[0u8; 32]);
+    // Must panic – non_admin is not the admin
+    client.upgrade(&non_admin, &dummy_hash);
 }
 
 // ============================================================================

@@ -133,7 +133,8 @@ impl PriceOracle {
             admin.clone(),
         );
 
-        crate::auth::_set_admin(&env, &admin);
+        let admins = soroban_sdk::vec![&env, admin];
+        crate::auth::_set_admin(&env, &admins);
         env.storage()
             .instance()
             .set(&DataKey::BaseCurrencyPairs, &base_currency_pairs);
@@ -150,12 +151,15 @@ impl PriceOracle {
             admin.clone(),
         );
 
-        crate::auth::_set_admin(&env, &admin);
+        let admins = soroban_sdk::vec![&env, admin];
+        crate::auth::_set_admin(&env, &admins);
     }
 
-    /// Return the current admin address.
+    /// Return the current admin addresses.
     pub fn get_admin(env: Env) -> Address {
         crate::auth::_get_admin(&env)
+            .get(0)
+            .expect("No admin set")
     }
 
     /// Get the price data for a specific asset.
@@ -270,13 +274,30 @@ impl PriceOracle {
         storage.set(&DataKey::PriceData, &prices);
     }
 
+    /// Upgrade the contract WASM code.
+    ///
+    /// Replaces the on-chain WASM bytecode with the provided hash while preserving
+    /// all contract storage. Strictly restricted to the admin.
+    ///
+    /// # Arguments
+    /// * `admin`    - The current admin address (must sign the transaction)
+    /// * `new_wasm_hash` - The hash of the new WASM blob already uploaded to the ledger
+    ///
+    /// # Panics
+    /// If `admin` is not the current contract admin.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: soroban_sdk::BytesN<32>) {
+        admin.require_auth();
+        crate::auth::_require_authorized(&env, &admin);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+
     /// Remove an asset from the oracle, deleting its price entry.
     ///
     /// Only the admin can call this. Returns `Error::AssetNotFound` if the asset
     /// is not currently tracked. Frees ledger space for decommissioned pairs.
     pub fn remove_asset(env: Env, admin: Address, asset: Symbol) -> Result<(), Error> {
         admin.require_auth();
-        crate::auth::_require_admin(&env, &admin);
+        crate::auth::_require_authorized(&env, &admin);
 
         let storage = env.storage().persistent();
         let mut prices: soroban_sdk::Map<Symbol, PriceData> = storage
